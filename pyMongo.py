@@ -13,3 +13,11 @@ def finish_game():
         { _id: ObjectId("5e1d16d5df6dc71021b31c92")},
         { $inc: { total_games: 1 } } }
     )
+
+#keeps track of previous winners and total times won, this might not work; not tested
+def add_winner(discord_id):
+    collection.update(
+        { _id: ObjectId("5e1d16d5df6dc71021b31c92")},
+        {$inc: winners[{discord_id: 1}]},
+        {upsert: true}
+    )
