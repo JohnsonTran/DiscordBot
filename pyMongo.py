@@ -15,28 +15,23 @@ def finish_game():
         { $set: {last_played: Date()} }
     )
 
-'''
-def add_winner(discord_id):
-    collection.update(
-        { _id: ObjectId("5e1d16d5df6dc71021b31c92")},
-        {$inc: winners[{discord_id: 1}] },
-        {upsert: true}
+def add_to_winners():
+    #adds player to the database
+    db.uno.update({_id: ObjectId("5e1d16d5df6dc71021b31c92")},
+        {$push: {
+            winners: [{
+                name: "Chris",
+                wins: 0
+            }]
+        }}
     )
-    BUGFIXING THIS, LOOK AT BOTTOM'''
+    #somehow combine this
+    #This only updates if the player is in the DB
+    db.uno.updateOne({_id: ObjectId("5e1d16d5df6dc71021b31c92"), winners: {$elemMatch: {name: "GruntyBunty"}}},
+        {$inc: {"winners.$.wins" : 1}},
+        {upsert: true}
+    )   
 
 #probably need to format this since discord should display BSON
 def get_stats(): 
     collection.find(_id: ObjectId("5e1d16d5df6dc71021b31c92")).pretty()
-
-
-    #currently only sets, needs to inc
-    db.uno.update({ _id: ObjectId("5e1d16d5df6dc71021b31c92")},
-        {winners: [ {GruntyBunty: 1} ]},
-        {upsert: true}   
-    )
-
-       db.uno.update({ _id: ObjectId("5e1d16d5df6dc71021b31c92")},
-        {$inc:{"winners.GruntyBunty": 1}},
-        {upsert: true}
-    )
-   
