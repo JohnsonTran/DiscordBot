@@ -62,6 +62,15 @@ color_change_emoji = {
     "BLUE": "\U0001F535"
 }
 
+# converts a given color (red, yellow, green, or blue) into the color unicode for display
+card_color_into_code = {
+    "RED": discord.Colour.red(),
+    "YELLOW": discord.Colour.from_rgb(255, 255, 0),
+    "GREEN": discord.Colour.green(),
+    "BLUE": discord.Colour.blue(),
+    "BLACK": discord.Colour.from_rgb(0, 0, 0)
+}
+
 # deals players 7 cards for the start of the game
 def start_game(deck, player_list):
     deck.shuffle()
@@ -74,45 +83,39 @@ async def get_next_player(player_list, index, reverse):
     return (index - 1) % len(player_list) if reverse else (index + 1) % len(player_list)
 
 # deals with action cards
-# TODO: +4 and +2 and skip does not skip next player's turn (make a new method that returns the new nex_player_index or return it at the end and assign it)
-async def handle_action_card(ctx, card, deck, p_list, reverse, index, next_player_index, curr_color):
+# TODO: reverse does not cycle through - it goes the other way around then back to the player who played it
+async def handle_action_card(ctx, card, deck, p_list, reverse, index, next_player_index):
+    curr_user = p_list[index].discord_info
+    next_player = p_list[next_player_index]
+    next_user = next_player.discord_info
     if card.value == "REVERSE":
         # reverse the cycle
         await ctx.send("The tides have turned")
-        reverse = not reverse
         next_player_index = await get_next_player(p_list, index, reverse)
     elif card.value == "+2":
         for i in range(2):
             deck.deal(p_list[next_player_index])
+        await next_user.send("{} played a +2. You drew {} and {}. Your turn is skipped".format(curr_user.name,
+                                                                                               next_player.hand[-2],
+                                                                                               next_player.hand[-1]))
         await ctx.send("{} drew 2 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
-        # skips the next player
-        next_player_index = await get_next_player(p_list, next_player_index, reverse)
+        next_player_index = await get_next_player(p_list, next_player_index, reverse)  # skips the next player
     elif card.value == "+4":
         for i in range(4):
             deck.deal(p_list[next_player_index])
-        # skips the next player
+        await next_user.send(
+            "{} played a +4. You drew {}, {}, {}, and {}. Your turn is skipped".format(curr_user.name,
+                                                                                       next_player.hand[-4],
+                                                                                       next_player.hand[-3],
+                                                                                       next_player.hand[-2],
+                                                                                       next_player.hand[-1]))
         await ctx.send("{} drew 4 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
-        next_player_index = await get_next_player(p_list, next_player_index, reverse)
+        next_player_index = await get_next_player(p_list, next_player_index, reverse)  # skips the next player
     elif card.value == "SKIP":
-        # skips the next player
+        await next_user.send("{} played a skip. Your turn is skipped".format(curr_user.name))
         await ctx.send("{}'s turn is skipped".format(p_list[next_player_index].discord_info.name))
-        next_player_index = await get_next_player(p_list, next_player_index, reverse)
-
-
-# converts a given color (red, yellow, green, or blue) into unicode for display
-# TODO: convert into dictionary
-def card_color_into_code(curr_color):
-    if curr_color == "RED":
-        return discord.Colour.red()
-    elif curr_color == "YELLOW":
-        return discord.Colour.from_rgb(255, 255, 0)
-    elif curr_color == "GREEN":
-        return discord.Colour.green()
-    elif curr_color == "BLUE":
-        return discord.Colour.blue()
-    elif curr_color == "BLACK":
-        return discord.Colour.from_rgb(0, 0, 0)
-
+        next_player_index = await get_next_player(p_list, next_player_index, reverse)  # skips the next player
+    return next_player_index
 
 # determines if there is a winner
 def winner(player_list):
@@ -122,9 +125,10 @@ def winner(player_list):
     return False
 
 
+# TODO: make command to exit the current game
 class UNO(commands.Cog):
 
-    game_start = False
+    game_start = False  # TODO: hinders games on other servers
 
     def __init__(self, client):
         self.client = client
@@ -135,7 +139,6 @@ class UNO(commands.Cog):
 
     # command to play UNO
     @commands.command()
-    # TODO: make command to exit the current game
     async def play(self, ctx):
         if self.game_start:
             await ctx.send("There is already a game in progress. Wait until it is finished.")
@@ -159,20 +162,12 @@ class UNO(commands.Cog):
                 await ctx.send("The players of this game are:")
                 for user in users:
                     await ctx.send(user.mention)
-
-                # ***uncomment if considering other reactions***
-                # players = []
-                # for reaction in cache_msg.reactions:
-                #     async for user in reaction.users():
-                #         players.append(user)
-                # print(players)
-
                 # game setup
                 deck = Deck()
                 player_list = []
                 for user in users:
                     player_list.append(Player(user))
-                # shuffle(player_list)
+                shuffle(player_list)
                 start_game(deck, player_list)
                 index = 0
                 deck.setup()
@@ -184,7 +179,7 @@ class UNO(commands.Cog):
                     card_in_play = deck.discard[len(deck.discard) - 1]
                     embed = discord.Embed(title="It is {}'s turn".format(curr_player.discord_info.name),
                                           description="The current card is {}".format(card_in_play),
-                                          color=card_color_into_code(curr_color))
+                                          color=card_color_into_code[curr_color])
                     await ctx.send(embed=embed)
                     # get input from the player
                     while True:
@@ -193,53 +188,50 @@ class UNO(commands.Cog):
                         if action is None:  # player drew
                             embed = discord.Embed(title="{} drew a card".format(curr_player.discord_info.name),
                                                   description="The current card is {}".format(card_in_play),
-                                                  color=card_color_into_code(curr_color))
+                                                  color=card_color_into_code[curr_color])
                             await ctx.send(embed=embed)
                             card = card_in_play  # used to fix bug for drawing on the first turn (not sure if needed)
                             break
                         else:  # player played a card
                             card = action
                             embed = discord.Embed(title="{} played {}".format(curr_player.discord_info.name, str(card)),
-                                                  color=card_color_into_code(card.color))
+                                                  color=card_color_into_code[card.color])
                             await ctx.send(embed=embed)
                             # get color change when a black card is played
                             if card.color == "BLACK":
                                 color_choice = await self.get_color_change(ctx, curr_player, curr_color)
                                 embed = discord.Embed(title="WILD CARD",
                                                       description="{} changed the color to {}".format(curr_player.discord_info.name, str(color_change_emoji[color_choice])),
-                                                      color=card_color_into_code(color_choice))
+                                                      color=card_color_into_code[color_choice])
                                 await ctx.send(embed=embed)
                                 curr_color = color_choice
+                            if card.value == "REVERSE":
+                                reverse = not reverse
                             curr_player.hand.remove(card)
                             deck.discard.append(card)
-                            # TODO: work on special actions
-                            await handle_action_card(ctx, card, deck, player_list, reverse, index, next_player_index, curr_color)
+                            next_player_index = await handle_action_card(ctx, card, deck, player_list, reverse, index, next_player_index)
                             break  # end of player's turn, got a valid move
-
-                        # if 0 <= int(action) < len(curr_player.hand):
-                        #     card = curr_player.hand[int(action)]
-                        #     # check if the card is playable
-                        #     if card.can_play(card_in_play) or card.can_play_color(curr_color):
-                        #         # plays the card
-                        #         curr_player.hand.remove(card)
-                        #         deck.discard.append(card)
-                        #         # do special card actions
-                        #         handle_action_card(card, deck, player_list, reverse, index, next_player_index, curr_color)
-                        #         break  # end of player's turn, got a valid move
                     index = next_player_index
                     curr_player = player_list[next_player_index]
                     # used to change the color when a WILD card is played
                     curr_color = card.color if card.color != "BLACK" else curr_color
-
-                # displays the winner
-                # TODO: make winner message
+                # someone won the game
                 self.game_start = False
+                # displays the winner
                 winner_index = 0
-                while len(player_list[winner_index].hand) != 0 and winner_index < len(player_list):
-                    winner_index += 1
-                print("The winner is Player", winner_index + 1)
+                player_index = 0
+                # dms everyone if they won or lost
+                while player_index < len(player_list):
+                    user = player_list[player_index].discord_info
+                    if len(player_list[player_index].hand) == 0:
+                        winner_index = player_index
+                        await user.send("Congratulations! You won!")  # does not dm winner
+                    else:
+                        await user.send("Sorry, you lost. Better luck next time.")
+                    player_index += 1
+                await ctx.send("Congratulations! " + player_list[winner_index].discord_info.mention + " won the game!")
 
-    # TODO: When the player has 19 cards, their turn is skipped unless they can play a card
+    # TODO: When the player has 19 cards, they cannot draw anymore cards
     # asks the player what they want to do for their turn
     async def get_player_action(self, ctx, curr_player, card_in_play, curr_color, deck):
         player = curr_player.discord_info
@@ -250,7 +242,7 @@ class UNO(commands.Cog):
 
             embed = discord.Embed(title="It is your turn!",
                                   description=message,
-                                  color=card_color_into_code(curr_color))
+                                  color=card_color_into_code[curr_color])
             for card in range(len(curr_player.hand)):
                 embed.add_field(name="\u200b", value=str(card_index[card] + ": " + str(curr_player.hand[card])),
                                 inline=False)
@@ -277,7 +269,6 @@ class UNO(commands.Cog):
                 card_played = curr_player.hand[index]
                 await player.send("You played {}".format(str(card_played)))
                 if card_played.can_play(card_in_play) or card_played.can_play_color(curr_color):
-                    await player.send("Playing card")
                     valid = True
                 else:
                     await player.send("Invalid card choice. Pick again or draw")
