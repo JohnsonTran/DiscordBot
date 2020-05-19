@@ -75,8 +75,6 @@ card_color_into_code = {
 # TODO: game crashes when a player plays a special card that causes another player to have over 19 cards
 class UNO(commands.Cog):
 
-    game_start = False  # TODO: hinders games on other servers
-
     def __init__(self, client):
         self.client = client
 
@@ -87,84 +85,80 @@ class UNO(commands.Cog):
     # command to play UNO
     @commands.command()
     async def play(self, ctx):
-        if self.game_start:
-            await ctx.send("There is already a game in progress. Wait until it is finished.")
+        users = await self.game_prompt(ctx)
+        if len(users) == 0:
+            await ctx.send("I guess no one wants to play")
         else:
-            self.game_start = True
-            embed = discord.Embed(title="Want to play UNO?", description="React to the message to queue up!",
-                                  color=discord.Colour.red())
-            embed.set_author(name=ctx.author.name, icon_url=ctx.author.avatar_url)
-            embed.set_image(url="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/UNO_Logo.svg/550px-UNO_Logo.svg.png")
-            msg = await ctx.send(embed=embed)
-            await msg.add_reaction("\U0001F44D")  # thumbs-up emoji
-            await asyncio.sleep(10)
-            cache_msg = await ctx.channel.fetch_message(msg.id)
-            reaction = cache_msg.reactions[0]
-            users = await reaction.users().flatten()
-            users.pop(0)  # gets rid of the bot that reacted to the message
-            if len(users) == 0:
-                await ctx.send("I guess no one wants to play")
-                self.game_start = False
-            else:
-                await ctx.send("The players of this game are:")
-                for user in users:
-                    await ctx.send(user.mention)
-                # game setup
-                deck = Deck()
-                player_list = []
-                for user in users:
-                    player_list.append(Player(user))
-                shuffle(player_list)
-                self.start_game(deck, player_list)
-                index = 0
-                deck.setup()
-                curr_color = deck.discard[0].color
-                reverse = False
-                curr_player = player_list[index]
-                # plays the game
-                while not await self.winner(player_list):
-                    card_in_play = deck.discard[len(deck.discard) - 1]
-                    embed = discord.Embed(title="It is {}'s turn".format(curr_player.discord_info.name),
+            await ctx.send("The players of this game are:")
+            for user in users:
+                await ctx.send(user.mention)
+            # game setup
+            deck = Deck()
+            player_list = []
+            for user in users:
+                player_list.append(Player(user))
+            shuffle(player_list)
+            self.start_game(deck, player_list)
+            deck.setup()
+            curr_color = deck.get_top_card().color
+            reverse = False
+            index = 0
+            curr_player = player_list[index]
+            # plays the game
+            while not await self.winner(player_list):
+                card_in_play = deck.get_top_card()
+                embed = discord.Embed(title="It is {}'s turn".format(curr_player.discord_info.name),
+                                      description="The current card is {}".format(card_in_play),
+                                      color=card_color_into_code[curr_color])
+                await ctx.send(embed=embed)
+                # get input from the player
+                next_player_index = await self.get_next_player(player_list, index, reverse)
+                action = await self.get_player_action(ctx, curr_player, card_in_play, curr_color, deck)
+                if action is None:  # player drew
+                    embed = discord.Embed(title="{} drew a card".format(curr_player.discord_info.name),
                                           description="The current card is {}".format(card_in_play),
                                           color=card_color_into_code[curr_color])
                     await ctx.send(embed=embed)
-                    # get input from the player
-                    while True:
-                        next_player_index = await self.get_next_player(player_list, index, reverse)
-                        action = await self.get_player_action(ctx, curr_player, card_in_play, curr_color, deck)
-                        if action is None:  # player drew
-                            embed = discord.Embed(title="{} drew a card".format(curr_player.discord_info.name),
-                                                  description="The current card is {}".format(card_in_play),
-                                                  color=card_color_into_code[curr_color])
-                            await ctx.send(embed=embed)
-                            card = card_in_play  # used to fix bug for drawing on the first turn (not sure if needed)
-                            break
-                        else:  # player played a card
-                            card = action
-                            embed = discord.Embed(title="{} played {}".format(curr_player.discord_info.name, str(card)),
-                                                  color=card_color_into_code[card.color])
-                            await ctx.send(embed=embed)
-                            # get color change when a black card is played
-                            if card.color == "BLACK":
-                                color_choice = await self.get_color_change(ctx, curr_player, curr_color)
-                                embed = discord.Embed(title="WILD CARD",
-                                                      description="{} changed the color to {}".format(curr_player.discord_info.name, str(color_change_emoji[color_choice])),
-                                                      color=card_color_into_code[color_choice])
-                                await ctx.send(embed=embed)
-                                curr_color = color_choice
-                            if card.value == "REVERSE":
-                                reverse = not reverse
-                            curr_player.play_card(card)
-                            deck.add_to_discard(card)
-                            next_player_index = await self.handle_action_card(ctx, card, deck, player_list, reverse, index, next_player_index)
-                            break  # end of player's turn, got a valid move
-                    index = next_player_index
-                    curr_player = player_list[next_player_index]
-                    # used to change the color when a WILD card is played
-                    curr_color = card.color if card.color != "BLACK" else curr_color
-                # someone won the game
-                self.game_start = False
-                await self.display_winner(ctx, player_list)
+                else:  # player played a card
+                    card = action
+                    embed = discord.Embed(title="{} played {}".format(curr_player.discord_info.name, str(card)),
+                                          color=card_color_into_code[card.color])
+                    await ctx.send(embed=embed)
+                    # get color change when a black card is played
+                    if card.color == "BLACK":
+                        color_choice = await self.get_color_change(ctx, curr_player, curr_color)
+                        embed = discord.Embed(title="WILD CARD",
+                                              description="{} changed the color to {}".format(curr_player.discord_info.name, str(color_change_emoji[color_choice])),
+                                              color=card_color_into_code[color_choice])
+                        await ctx.send(embed=embed)
+                        curr_color = color_choice
+                    if card.value == "REVERSE":
+                        reverse = not reverse
+                    curr_player.play_card(card)
+                    deck.add_to_discard(card)
+                    next_player_index = await self.handle_action_card(ctx, card, deck, player_list, reverse, index, next_player_index)
+                index = next_player_index
+                curr_player = player_list[next_player_index]
+                # used to change the color when a WILD card is played
+                curr_color = card.color if card.color != "BLACK" else curr_color
+            # someone won the game
+            await self.display_winner(ctx, player_list)
+
+    # asks people to join and returns the list of people who are playing
+    async def game_prompt(self, ctx):
+        embed = discord.Embed(title="Want to play UNO?", description="React to the message to queue up!",
+                              color=discord.Colour.red())
+        embed.set_author(name=ctx.author.name, icon_url=ctx.author.avatar_url)
+        embed.set_image(
+            url="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/UNO_Logo.svg/550px-UNO_Logo.svg.png")
+        msg = await ctx.send(embed=embed)
+        await msg.add_reaction("\U0001F44D")  # thumbs-up emoji
+        await asyncio.sleep(10)
+        cache_msg = await ctx.channel.fetch_message(msg.id)
+        reaction = cache_msg.reactions[0]
+        users = await reaction.users().flatten()
+        users.pop(0)  # removes the bot from the player list
+        return users
 
     # deals players 7 cards for the start of the game
     def start_game(self, deck, player_list):
@@ -231,7 +225,7 @@ class UNO(commands.Cog):
             if index == 19:
                 if len(curr_player.get_hand()) >= 19:
                     await player.send("You have the max amount of cards, so your turn is skipped instead ")
-                else :
+                else:
                     curr_player.take_card(deck.deal())
                     await player.send("You drew {}".format(str(curr_player.hand[-1])))
                 valid = True
@@ -257,24 +251,19 @@ class UNO(commands.Cog):
             for i in range(2):
                 p_list[next_player_index].take_card(deck.deal())
             await next_user.send("{} played a +2. You drew {} and {}. Your turn is skipped".format(curr_user.name,
-                                                                                                   next_player.card_at(
-                                                                                                       -2),
-                                                                                                   next_player.card_at(
-                                                                                                       -1)))
-            await ctx.send(
-                "{} drew 2 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
+                                                                                                   next_player.card_at(-2),
+                                                                                                   next_player.card_at(-1)))
+            await ctx.send("{} drew 2 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
             next_player_index = await self.get_next_player(p_list, next_player_index, reverse)  # skips the next player
         elif card.value == "+4":
             for i in range(4):
                 p_list[next_player_index].take_card(deck.deal())
-            await next_user.send(
-                "{} played a +4. You drew {}, {}, {}, and {}. Your turn is skipped".format(curr_user.name,
-                                                                                           next_player.card_at(-4),
-                                                                                           next_player.card_at(-3),
-                                                                                           next_player.card_at(-2),
-                                                                                           next_player.card_at(-1)))
-            await ctx.send(
-                "{} drew 4 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
+            await next_user.send("{} played a +4. You drew {}, {}, {}, and {}. Your turn is skipped".format(curr_user.name,
+                                                                                                            next_player.card_at(-4),
+                                                                                                            next_player.card_at(-3),
+                                                                                                            next_player.card_at(-2),
+                                                                                                            next_player.card_at(-1)))
+            await ctx.send("{} drew 4 cards and their turn is skipped".format(p_list[next_player_index].discord_info.name))
             next_player_index = await self.get_next_player(p_list, next_player_index, reverse)  # skips the next player
         elif card.value == "SKIP":
             await next_user.send("{} played a skip. Your turn is skipped".format(curr_user.name))
@@ -385,8 +374,13 @@ class Deck:
             shuffle()
         return self.deck.pop()
 
+    # adds a card to the discard pile
     def add_to_discard(self, card):
         self.discard.append(card)
+
+    # returns the top card of the discard pile (card in play)
+    def get_top_card(self):
+        return self.discard[-1]
 
     # sets up the first card of the game, changes the card if the first card is WILD
     def setup(self):
