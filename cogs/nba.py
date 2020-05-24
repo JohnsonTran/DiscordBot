@@ -14,9 +14,9 @@ class nba(commands.Cog):
     async def on_ready(self):
         print("nba is ready to go")
 
+    # returns the games/scores of a given date
     @commands.command()
     async def scores(self, ctx, *, date=''):
-        # TODO: handle special games (All-Star)
         result = ''
         if date != '':
             try:
@@ -29,6 +29,7 @@ class nba(commands.Cog):
             result = await self.get_scores(score)
         await ctx.send(result)
 
+    # formats the output for scores
     async def get_scores(self, score):
         result = ''
         line_score = score.line_score
@@ -59,6 +60,29 @@ class nba(commands.Cog):
                                                              home_team,
                                                              home_win)
         return result
+
+    # returns the careers stats of a given player
+    @commands.command()
+    async def pcareerstat(self, ctx, *, player_name=''):
+        from nba_api.stats.endpoints import playercareerstats
+        from nba_api.stats.static import players
+
+        result = ''
+        player_dict = players.get_players()
+
+        try:
+            player_info = [player for player in player_dict if player['full_name'] == player_name][0]
+            play_id = player_info['id']
+            career_stats = playercareerstats.PlayerCareerStats(player_id=play_id)
+            career_tot = career_stats.career_totals_regular_season.get_data_frame()
+            result += 'Career Stats for {}:\n'.format(player_name)
+            for cat in range(3,len(career_tot.columns)):  # filters out the player, league, and team ID
+                category = career_tot.columns[cat]
+                result += "{}: {}\n".format(category, career_tot[category][0])
+        except:
+            result = 'Couldn\'t find the player. Names are case-sensitive.'
+
+        await ctx.send(result)
 
 def setup(client):
     client.add_cog(nba(client))
