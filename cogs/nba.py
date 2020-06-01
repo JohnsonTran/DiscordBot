@@ -3,6 +3,7 @@ import asyncio
 from discord.ext import commands
 from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
+from nba_api.stats.library.parameters import GameDate
 import pandas as pd
 
 class nba(commands.Cog):
@@ -14,29 +15,30 @@ class nba(commands.Cog):
     async def on_ready(self):
         print("nba is ready to go")
 
+    def make_embed(self, title, message):
+        return discord.Embed(title=title, description=message)
+
     # returns the games/scores of a given date
     @commands.command()
-    async def scores(self, ctx, *, date=''):
-        result = ''
-        if date != '':
-            try:
-                score = scoreboard.Scoreboard(game_date=date)
-                result = await self.get_scores(score)
-            except:
-                result = 'Invalid date format, make sure the format is "YYYY-MM-DD" '
-        else:
-            score = scoreboard.Scoreboard()
+    async def scores(self, ctx, *, date=GameDate.default):
+        # default date is the current date
+        try:
+            score = scoreboard.Scoreboard(game_date=date)
             result = await self.get_scores(score)
-        await ctx.send(result)
+            if result == '':
+                await ctx.send('No games were played that day')
+            else:
+                embed = discord.Embed(title="Scores for {}".format(date), description=result)
+                await ctx.send(embed=embed)
+        except:
+            await ctx.send('Invalid date format, make sure the format is "YYYY-MM-DD" ')
 
     # formats the output for scores
     async def get_scores(self, score):
         result = ''
         line_score = score.line_score
         ls_df = line_score.get_data_frame()
-        if ls_df.empty:
-            result = 'No games were played that day'
-        else:
+        if not ls_df.empty:
             team_points = ls_df[['TEAM_ID', 'PTS']]
             for x in range(0, len(team_points), 2):
                 try:
@@ -76,14 +78,15 @@ class nba(commands.Cog):
             play_id = player_info['id']
             career_stats = playercareerstats.PlayerCareerStats(player_id=play_id)
             career_tot = career_stats.career_totals_regular_season.get_data_frame()
-            result += 'Career Stats for {}:\n'.format(player_info['full_name'])
+            embed = discord.Embed(title='Career Stats for {}:\n'.format(player_info['full_name']))
             for cat in range(3,len(career_tot.columns)):  # filters out the player, league, and team ID
                 category = career_tot.columns[cat]
                 result += "{}: {}\n".format(category, career_tot[category][0])
+            embed.description = result
+            await ctx.send(embed=embed)
         except:
-            result = 'Couldn\'t find the player.'
+            await ctx.send('Couldn\'t find the player.')
 
-        await ctx.send(result)
 
     # returns the careers stats of a given player
     @commands.command()
@@ -92,10 +95,9 @@ class nba(commands.Cog):
         from nba_api.stats.static import players
         from nba_api.stats.static import teams
 
-        # check if the input is Firstname Lastname Year (beginning of season)
-        result = ''
+        # check if the input is first name, last name, and year (beginning of season)
         if len(input) < 3:
-            result = 'Please provide the player\'s full name and season (in that order)'
+            await ctx.send('Please provide the player\'s full name and year at the beginning of the season (in that order)')
         else:
             player_name = input[0] + ' ' + input[1]
             player_name = player_name.lower()
@@ -112,17 +114,18 @@ class nba(commands.Cog):
                     season_info = season_tot[season_tot['SEASON_ID'] == season]
                     categories = season_info.columns
                     stats = season_info.values
-                    result += '{} Season Stats for {}:\n'.format(season, player_info['full_name'])
+                    embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
                     team_id = stats[0][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
                     player_team = teams.find_team_name_by_id(team_id)
-                    result += 'TEAM: {}\n'.format(player_team['full_name'])
+                    result = 'TEAM: {}\n'.format(player_team['full_name'])
                     for cat in range(5, len(categories)):  # filters out the player, league, and team ID
                         result += '{}: {}\n'.format(categories[cat], stats[0][cat])
+                    embed.description = result
+                    await ctx.send(embed=embed)
                 except:
-                    result = 'The player did not play in that season'
+                    await ctx.send('The player did not play in that season')
             except:
-                result = 'Couldn\'t find the player. Names are case-sensitive.'
-        await ctx.send(result)
+                await ctx.send('Couldn\'t find the player.')
 
     # returns the league standings
     @commands.command()
@@ -133,13 +136,15 @@ class nba(commands.Cog):
         east_stand = stand_df[stand_df['Conference'] == 'East']
         west_stand = stand_df[stand_df['Conference'] == 'West']
 
+        embed = discord.Embed(title='Current Standings:')
         result = 'Eastern Conference:\n'
         for i, row in enumerate(east_stand.itertuples(), 1):
             result += '{:<4} {:25} {:5}\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
         result += '\nWestern Conference:\n'
         for i, row in enumerate(west_stand.itertuples(), 1):
             result += '{:<4} {:25} {:5}\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
-        await ctx.send(result)
+        embed.description = result
+        await ctx.send(embed=embed)
 
     # returns the league leaders for a given statistic
     @commands.command()
@@ -150,13 +155,15 @@ class nba(commands.Cog):
         result = ''
         stat_cat = await self.get_stat_cat(stat.upper())
         if stat_cat is None:
-            result = 'Please input a valid category. The categories are: PTS, AST, REB, and BLK'
+            await ctx.send('Please input a valid category. The categories are: PTS, AST, REB, and BLK')
         else:
             leaders = homepageleaders.HomePageLeaders(player_or_team=PlayerOrTeam.player, stat_category=stat_cat)
             leaders_df = leaders.get_data_frames()[0]
+            embed = discord.Embed(title='League Leaders for {}'.format(stat.upper()))
             for index, row in leaders_df.iterrows():
                 result += '{:<4} {:25} {:5}\n'.format(row.RANK, row.PLAYER, row[stat.upper()])
-        await ctx.send(result)
+            embed.description = result
+            await ctx.send(embed=embed)
 
     # returns the API category parameter based on string input
     async def get_stat_cat(self, category):
