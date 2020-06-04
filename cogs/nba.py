@@ -5,6 +5,7 @@ from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
 import pandas as pd
+import json
 
 class nba(commands.Cog):
 
@@ -69,7 +70,6 @@ class nba(commands.Cog):
         from nba_api.stats.endpoints import playercareerstats
         from nba_api.stats.static import players
 
-        result = ''
         player_dict = players.get_players()
 
         try:
@@ -79,9 +79,11 @@ class nba(commands.Cog):
             career_stats = playercareerstats.PlayerCareerStats(player_id=play_id)
             career_tot = career_stats.career_totals_regular_season.get_data_frame()
             embed = discord.Embed(title='Career Stats for {}:\n'.format(player_info['full_name']))
+            result = '```'
             for cat in range(3,len(career_tot.columns)):  # filters out the player, league, and team ID
                 category = career_tot.columns[cat]
                 result += "{}: {}\n".format(category, career_tot[category][0])
+            result += '```'
             embed.description = result
             await ctx.send(embed=embed)
         except:
@@ -117,9 +119,10 @@ class nba(commands.Cog):
                     embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
                     team_id = stats[0][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
                     player_team = teams.find_team_name_by_id(team_id)
-                    result = 'TEAM: {}\n'.format(player_team['full_name'])
+                    result = '```TEAM: {}\n'.format(player_team['full_name'])
                     for cat in range(5, len(categories)):  # filters out the player, league, and team ID
                         result += '{}: {}\n'.format(categories[cat], stats[0][cat])
+                    result += '```'
                     embed.description = result
                     await ctx.send(embed=embed)
                 except:
@@ -137,13 +140,15 @@ class nba(commands.Cog):
         west_stand = stand_df[stand_df['Conference'] == 'West']
 
         embed = discord.Embed(title='Current Standings:')
-        result = 'Eastern Conference:\n'
+
+        east_result = ''
         for i, row in enumerate(east_stand.itertuples(), 1):
-            result += '{:<4} {:25} {:5}\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
-        result += '\nWestern Conference:\n'
+            east_result += '`{:<3} {:23} {:5}`\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
+        embed.add_field(name='Eastern Conference', value=east_result, inline=True)
+        west_result = ''
         for i, row in enumerate(west_stand.itertuples(), 1):
-            result += '{:<4} {:25} {:5}\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
-        embed.description = result
+            west_result += '`{:<3} {:23} {:5}`\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
+        embed.add_field(name='Western Conference', value=west_result, inline=True)
         await ctx.send(embed=embed)
 
     # returns the league leaders for a given statistic
@@ -152,22 +157,23 @@ class nba(commands.Cog):
         from nba_api.stats.endpoints import homepageleaders
         from nba_api.stats.library.parameters import PlayerOrTeam
 
-        result = ''
         stat_cat = await self.get_stat_cat(stat.upper())
         if stat_cat is None:
             await ctx.send('Please input a valid category. The categories are: PTS, AST, REB, and BLK')
         else:
             leaders = homepageleaders.HomePageLeaders(player_or_team=PlayerOrTeam.player, stat_category=stat_cat)
             leaders_df = leaders.get_data_frames()[0]
-            embed = discord.Embed(title='League Leaders for {}'.format(stat.upper()))
+            embed = discord.Embed(title='League Leaders for {} Per Game'.format(stat.upper()))
+            result = '`{:<4}  {:23} {:>5}`\n'.format('Rank', 'Name', stat.upper())
             for index, row in leaders_df.iterrows():
-                result += '{:<4} {:25} {:5}\n'.format(row.RANK, row.PLAYER, row[stat.upper()])
+                result += '`{:<4}  {:23} {:5}`\n'.format(row.RANK, row.PLAYER, row[stat.upper()])
             embed.description = result
             await ctx.send(embed=embed)
 
     # returns the API category parameter based on string input
     async def get_stat_cat(self, category):
         from nba_api.stats.library.parameters import StatCategory
+
         return {
             'PTS': StatCategory.points,
             'AST': StatCategory.assists,
@@ -175,6 +181,31 @@ class nba(commands.Cog):
             'BLK': StatCategory.defense
 
         }.get(category, None)
+
+    # adds a player to a user's favorites list
+    @commands.command()
+    async def fav(self, ctx, *, player_name=''):
+        from nba_api.stats.static import players
+
+        player_dict = players.get_players()
+        try:
+            player_name = player_name.lower()
+            player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+            player_name = player_info['full_name']
+            user_id = str(ctx.author.id)
+            with open('user_favorites.json') as f:
+                favorites = json.load(f)
+            if not favorites or user_id not in favorites:
+                favorites[user_id] = [player_name]
+            else:
+                fav_list = favorites[user_id]
+                fav_list.append(player_name)
+                favorites[user_id] = fav_list
+            with open('user_favorites.json', 'w') as f:
+                json.dump(favorites, f, indent=4)
+            await ctx.send("{} has been added to your favorites list.".format(player_name))
+        except:
+            await ctx.send('Couldn\'t find the player.')
 
 
 def setup(client):
