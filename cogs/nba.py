@@ -198,15 +198,56 @@ class nba(commands.Cog):
             if not favorites or user_id not in favorites:
                 favorites[user_id] = [player_name]
             else:
-                fav_list = favorites[user_id]
-                fav_list.append(player_name)
-                favorites[user_id] = fav_list
+                fav_list = set(favorites[user_id])
+                fav_list.add(player_name)
+                favorites[user_id] = list(fav_list)
             with open('user_favorites.json', 'w') as f:
                 json.dump(favorites, f, indent=4)
             await ctx.send("{} has been added to your favorites list.".format(player_name))
         except:
             await ctx.send('Couldn\'t find the player.')
 
+    # returns the user's favorites list
+    @commands.command()
+    async def favlist(self, ctx):
+        user_id = str(ctx.author.id)
+        with open('user_favorites.json') as f:
+            favorites = json.load(f)
+        if not favorites or user_id not in favorites:
+            await ctx.send('You don\'t anyone on your favorites list')
+        else:
+            fav_list = favorites[user_id]
+            embed = discord.Embed(title='{}\'s Favorites List'.format(ctx.author.display_name))
+            result = ''
+            for player in fav_list:
+                result += '**{}**\n'.format(player)
+            embed.description = result
+            await ctx.send(embed=embed)
+
+    # removes a player from the user's favorites list
+    @commands.command()
+    async def favremove(self, ctx, *, player_name=''):
+        from nba_api.stats.static import players
+
+        player_dict = players.get_players()
+        try:
+            player_name = player_name.lower()
+            player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+            player_name = player_info['full_name']
+            user_id = str(ctx.author.id)
+            with open('user_favorites.json') as f:
+                favorites = json.load(f)
+            if not favorites or user_id not in favorites:
+                favorites[user_id] = [player_name]
+            else:
+                fav_list = set(favorites[user_id])
+                fav_list.remove(player_name)
+                favorites[user_id] = list(fav_list)
+            with open('user_favorites.json', 'w') as f:
+                json.dump(favorites, f, indent=4)
+            await ctx.send("{} has been removed from your favorites list.".format(player_name))
+        except:
+            await ctx.send('Couldn\'t find the player.')
 
 def setup(client):
     client.add_cog(nba(client))
