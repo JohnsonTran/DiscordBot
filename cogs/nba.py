@@ -1,11 +1,18 @@
 import discord
-import asyncio
 from discord.ext import commands
 from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
-import pandas as pd
 import json
+
+from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+from bs4 import BeautifulSoup
+
+options = Options()
+options.add_argument("--headless")
+browser = webdriver.Chrome(ChromeDriverManager().install(), chrome_options=options)
 
 class nba(commands.Cog):
 
@@ -15,9 +22,6 @@ class nba(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         print("nba is ready to go")
-
-    def make_embed(self, title, message):
-        return discord.Embed(title=title, description=message)
 
     # returns the games/scores of a given date
     @commands.command()
@@ -75,20 +79,37 @@ class nba(commands.Cog):
         try:
             player_name = player_name.lower()
             player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
-            play_id = player_info['id']
-            career_stats = playercareerstats.PlayerCareerStats(player_id=play_id)
+            player_id = player_info['id']
+            img_link = await self.get_player_image(player_id)
+            career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
             career_tot = career_stats.career_totals_regular_season.get_data_frame()
             embed = discord.Embed(title='Career Stats for {}:\n'.format(player_info['full_name']))
             result = '```'
-            for cat in range(3,len(career_tot.columns)):  # filters out the player, league, and team ID
+            for cat in range(3, len(career_tot.columns)):  # filters out the player, league, and team ID
                 category = career_tot.columns[cat]
                 result += "{}: {}\n".format(category, career_tot[category][0])
             result += '```'
             embed.description = result
+            embed.set_thumbnail(url=img_link)
             await ctx.send(embed=embed)
         except:
             await ctx.send('Couldn\'t find the player.')
 
+    # returns the image of the player
+    async def get_player_image(self, player_id):
+        # tries to see if it is the local JSON file and gets it from the web if not
+        with open('player_img.json') as f:
+            images = json.load(f)
+        if str(player_id) not in images:
+            browser.get("https://stats.nba.com/player/{}/".format(player_id))
+            data = BeautifulSoup(browser.page_source, 'lxml')
+            img_link = data.find(class_='player-img')['src']
+            images[player_id] = [img_link]
+            with open('player_img.json', 'w') as f:
+                json.dump(images, f, indent=4)
+        else:
+            img_link = images[str(player_id)][0]
+        return img_link
 
     # returns the careers stats of a given player
     @commands.command()
@@ -108,14 +129,16 @@ class nba(commands.Cog):
             # check if the user inputted a valid player
             try:
                 player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
-                play_id = player_info['id']
-                player_career_stats = playercareerstats.PlayerCareerStats(player_id=play_id)
+                player_id = player_info['id']
+                player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
                 # check if the user inputted a valid season
                 try:
                     season_tot = player_career_stats.season_totals_regular_season.get_data_frame()
                     season_info = season_tot[season_tot['SEASON_ID'] == season]
+                    print(season_info)
                     categories = season_info.columns
                     stats = season_info.values
+                    img_link = await self.get_player_image(player_id)
                     embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
                     team_id = stats[0][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
                     player_team = teams.find_team_name_by_id(team_id)
@@ -124,6 +147,7 @@ class nba(commands.Cog):
                         result += '{}: {}\n'.format(categories[cat], stats[0][cat])
                     result += '```'
                     embed.description = result
+                    embed.set_thumbnail(url=img_link)
                     await ctx.send(embed=embed)
                 except:
                     await ctx.send('The player did not play in that season')
@@ -248,6 +272,7 @@ class nba(commands.Cog):
             await ctx.send("{} has been removed from your favorites list.".format(player_name))
         except:
             await ctx.send('Couldn\'t find the player.')
+
 
 def setup(client):
     client.add_cog(nba(client))
