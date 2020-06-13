@@ -4,6 +4,7 @@ from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
 import json
+import asyncio
 
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
@@ -135,7 +136,6 @@ class nba(commands.Cog):
                 try:
                     season_tot = player_career_stats.season_totals_regular_season.get_data_frame()
                     season_info = season_tot[season_tot['SEASON_ID'] == season]
-                    print(season_info)
                     categories = season_info.columns
                     stats = season_info.values
                     img_link = await self.get_player_image(player_id)
@@ -148,7 +148,36 @@ class nba(commands.Cog):
                     result += '```'
                     embed.description = result
                     embed.set_thumbnail(url=img_link)
-                    await ctx.send(embed=embed)
+                    msg = await ctx.send(embed=embed)
+                    if len(season_info.index) > 1:
+                        await msg.add_reaction(emoji='\U00002B05\U0000FE0F')  # left arrow
+                        await msg.add_reaction(emoji='\U000027A1\U0000FE0F')  # right arrow
+                        check = lambda reaction, user: self.client.user != user
+                        rows = list(season_info.index)
+                        index = 0
+                        while True:
+                            res = await self.client.wait_for('reaction_add', timeout=30, check=check)
+                            if res:
+                                cache_msg = res[0].message
+                                # checks the id so it can update the right message
+                                if cache_msg.id == msg.id:
+                                    if str(res[0]) == '\U00002B05\U0000FE0F':
+                                        index = (index - 1) % (len(rows) - 1)
+                                    elif str(res[0]) == '\U000027A1\U0000FE0F':
+                                        index = (index + 1) % (len(rows) - 1)
+                                embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
+                                team_id = stats[index][
+                                    categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
+                                player_team = teams.find_team_name_by_id(team_id)
+                                result = '```TEAM: {}\n'.format(player_team['full_name'])
+                                for cat in range(5, len(categories)):  # filters out the player, league, and team ID
+                                    result += '{}: {}\n'.format(categories[cat], stats[index][cat])
+                                result += '```'
+                                embed.description = result
+                                embed.set_thumbnail(url=img_link)
+                                await cache_msg.edit(embed=embed)
+                except asyncio.TimeoutError:
+                    print('Time\'s up')
                 except:
                     await ctx.send('The player did not play in that season')
             except:
