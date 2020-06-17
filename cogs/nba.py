@@ -15,6 +15,7 @@ options = Options()
 options.add_argument("--headless")
 browser = webdriver.Chrome(ChromeDriverManager().install(), chrome_options=options)
 
+
 class nba(commands.Cog):
 
     def __init__(self, client):
@@ -37,7 +38,7 @@ class nba(commands.Cog):
                 embed = discord.Embed(title="Scores for {}".format(date), description=result)
                 await ctx.send(embed=embed)
         except:
-            await ctx.send('Invalid date format, make sure the format is "YYYY-MM-DD" ')
+            await ctx.send('Invalid date format, make sure the format is "YYYY-MM-DD" or "MM-DD-YYYY"')
 
     # formats the output for scores
     async def get_scores(self, score):
@@ -69,17 +70,21 @@ class nba(commands.Cog):
                                                              home_win)
         return result
 
+    # returns the player's information from the API
+    async def get_player_info(self, player_name):
+        from nba_api.stats.static import players
+        player_dict = players.get_players()
+        player_name = player_name.lower()
+        player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+        return player_info
+
     # returns the careers stats of a given player
     @commands.command()
     async def pcareerstat(self, ctx, *, player_name=''):
         from nba_api.stats.endpoints import playercareerstats
-        from nba_api.stats.static import players
-
-        player_dict = players.get_players()
 
         try:
-            player_name = player_name.lower()
-            player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+            player_info = await self.get_player_info(player_name)
             player_id = player_info['id']
             img_link = await self.get_player_image(player_id)
             career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
@@ -116,7 +121,6 @@ class nba(commands.Cog):
     @commands.command()
     async def pseasonstat(self, ctx, *input):
         from nba_api.stats.endpoints import playercareerstats
-        from nba_api.stats.static import players
         from nba_api.stats.static import teams
 
         # check if the input is first name, last name, and year (beginning of season)
@@ -124,12 +128,10 @@ class nba(commands.Cog):
             await ctx.send('Please provide the player\'s full name and year at the beginning of the season (in that order)')
         else:
             player_name = input[0] + ' ' + input[1]
-            player_name = player_name.lower()
             season = input[2] + '-' + str(int(input[2]) + 1)[-2:]  # configure the season year to fit the API arguments
-            player_dict = players.get_players()
             # check if the user inputted a valid player
             try:
-                player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+                player_info = await self.get_player_info(player_name)
                 player_id = player_info['id']
                 player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
                 # check if the user inputted a valid season
@@ -149,9 +151,13 @@ class nba(commands.Cog):
                     embed.description = result
                     embed.set_thumbnail(url=img_link)
                     msg = await ctx.send(embed=embed)
+                    # if the player played on more than one team for a season, the stats for each team is showcased in
+                    # a carousel format for the user
                     if len(season_info.index) > 1:
-                        await msg.add_reaction(emoji='\U00002B05\U0000FE0F')  # left arrow
-                        await msg.add_reaction(emoji='\U000027A1\U0000FE0F')  # right arrow
+                        left_arrow_emoji = '\U00002B05\U0000FE0F'
+                        right_arrow_emoji = '\U000027A1\U0000FE0F'
+                        await msg.add_reaction(emoji=left_arrow_emoji)
+                        await msg.add_reaction(emoji=right_arrow_emoji)
                         check = lambda reaction, user: self.client.user != user
                         rows = list(season_info.index)
                         index = 0
@@ -159,11 +165,11 @@ class nba(commands.Cog):
                             res = await self.client.wait_for('reaction_add', timeout=30, check=check)
                             if res:
                                 cache_msg = res[0].message
-                                # checks the id so it can update the right message
+                                # checks the id so it can update the correct message
                                 if cache_msg.id == msg.id:
-                                    if str(res[0]) == '\U00002B05\U0000FE0F':
+                                    if str(res[0]) == left_arrow_emoji:
                                         index = (index - 1) % (len(rows) - 1)
-                                    elif str(res[0]) == '\U000027A1\U0000FE0F':
+                                    elif str(res[0]) == right_arrow_emoji:
                                         index = (index + 1) % (len(rows) - 1)
                                 embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
                                 team_id = stats[index][
@@ -232,18 +238,13 @@ class nba(commands.Cog):
             'AST': StatCategory.assists,
             'REB': StatCategory.rebounds,
             'BLK': StatCategory.defense
-
         }.get(category, None)
 
     # adds a player to a user's favorites list
     @commands.command()
     async def fav(self, ctx, *, player_name=''):
-        from nba_api.stats.static import players
-
-        player_dict = players.get_players()
         try:
-            player_name = player_name.lower()
-            player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+            player_info = await self.get_player_info(player_name)
             player_name = player_info['full_name']
             user_id = str(ctx.author.id)
             with open('user_favorites.json') as f:
@@ -251,12 +252,15 @@ class nba(commands.Cog):
             if not favorites or user_id not in favorites:
                 favorites[user_id] = [player_name]
             else:
-                fav_list = set(favorites[user_id])
-                fav_list.add(player_name)
-                favorites[user_id] = list(fav_list)
+                fav_list = list(favorites[user_id])
+                if player_name not in fav_list:
+                    fav_list.append(player_name)
+                    favorites[user_id] = fav_list
+                    await ctx.send("{} has been added to your favorites list.".format(player_name))
+                else:
+                    await ctx.send("{} is already on your favorites list.".format(player_name))
             with open('user_favorites.json', 'w') as f:
                 json.dump(favorites, f, indent=4)
-            await ctx.send("{} has been added to your favorites list.".format(player_name))
         except:
             await ctx.send('Couldn\'t find the player.')
 
@@ -270,6 +274,7 @@ class nba(commands.Cog):
             await ctx.send('You don\'t anyone on your favorites list')
         else:
             fav_list = favorites[user_id]
+            print(fav_list)
             embed = discord.Embed(title='{}\'s Favorites List'.format(ctx.author.display_name))
             result = ''
             for player in fav_list:
@@ -280,12 +285,8 @@ class nba(commands.Cog):
     # removes a player from the user's favorites list
     @commands.command()
     async def favremove(self, ctx, *, player_name=''):
-        from nba_api.stats.static import players
-
-        player_dict = players.get_players()
         try:
-            player_name = player_name.lower()
-            player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
+            player_info = await self.get_player_info(player_name)
             player_name = player_info['full_name']
             user_id = str(ctx.author.id)
             with open('user_favorites.json') as f:
