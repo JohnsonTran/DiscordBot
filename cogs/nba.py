@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from nba_api.stats.endpoints import playercareerstats
 from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
@@ -17,6 +18,10 @@ browser = webdriver.Chrome(ChromeDriverManager().install(), chrome_options=optio
 
 
 class nba(commands.Cog):
+
+    left_arrow_emoji = '\U00002B05\U0000FE0F'
+    right_arrow_emoji = '\U000027A1\U0000FE0F'
+    blue_circle_emoji = '\U0001F535'
 
     def __init__(self, client):
         self.client = client
@@ -81,8 +86,6 @@ class nba(commands.Cog):
     # returns the careers stats of a given player
     @commands.command()
     async def pcareerstat(self, ctx, *, player_name=''):
-        from nba_api.stats.endpoints import playercareerstats
-
         try:
             player_info = await self.get_player_info(player_name)
             player_id = player_info['id']
@@ -120,7 +123,6 @@ class nba(commands.Cog):
     # returns the careers stats of a given player
     @commands.command()
     async def pseasonstat(self, ctx, *input):
-        from nba_api.stats.endpoints import playercareerstats
         from nba_api.stats.static import teams
 
         # check if the input is first name, last name, and year (beginning of season)
@@ -129,65 +131,81 @@ class nba(commands.Cog):
         else:
             player_name = input[0] + ' ' + input[1]
             season = input[2] + '-' + str(int(input[2]) + 1)[-2:]  # configure the season year to fit the API arguments
-            # check if the user inputted a valid player
+            # checks if the user inputted a valid player
             try:
                 player_info = await self.get_player_info(player_name)
                 player_id = player_info['id']
                 player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
-                # check if the user inputted a valid season
+                # checks if the user inputted a valid season for the player
                 try:
+                    # sends the initial data
+                    toggle_per_game = False
+                    index = 0
                     season_tot = player_career_stats.season_totals_regular_season.get_data_frame()
                     season_info = season_tot[season_tot['SEASON_ID'] == season]
-                    categories = season_info.columns
-                    stats = season_info.values
                     img_link = await self.get_player_image(player_id)
-                    embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
-                    team_id = stats[0][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
-                    player_team = teams.find_team_name_by_id(team_id)
-                    result = '```TEAM: {}\n'.format(player_team['full_name'])
-                    for cat in range(5, len(categories)):  # filters out the player, league, and team ID
-                        result += '{}: {}\n'.format(categories[cat], stats[0][cat])
-                    result += '```'
-                    embed.description = result
-                    embed.set_thumbnail(url=img_link)
+                    embed = await self.make_season_embed(player_info, season, toggle_per_game, index, img_link)
                     msg = await ctx.send(embed=embed)
+                    await msg.add_reaction(emoji=self.blue_circle_emoji)
+
                     # if the player played on more than one team for a season, the stats for each team is showcased in
                     # a carousel format for the user
                     if len(season_info.index) > 1:
-                        left_arrow_emoji = '\U00002B05\U0000FE0F'
-                        right_arrow_emoji = '\U000027A1\U0000FE0F'
-                        await msg.add_reaction(emoji=left_arrow_emoji)
-                        await msg.add_reaction(emoji=right_arrow_emoji)
-                        check = lambda reaction, user: self.client.user != user
-                        rows = list(season_info.index)
-                        index = 0
-                        while True:
-                            res = await self.client.wait_for('reaction_add', timeout=30, check=check)
-                            if res:
-                                cache_msg = res[0].message
-                                # checks the id so it can update the correct message
-                                if cache_msg.id == msg.id:
-                                    if str(res[0]) == left_arrow_emoji:
-                                        index = (index - 1) % (len(rows) - 1)
-                                    elif str(res[0]) == right_arrow_emoji:
-                                        index = (index + 1) % (len(rows) - 1)
-                                embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
-                                team_id = stats[index][
-                                    categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
-                                player_team = teams.find_team_name_by_id(team_id)
-                                result = '```TEAM: {}\n'.format(player_team['full_name'])
-                                for cat in range(5, len(categories)):  # filters out the player, league, and team ID
-                                    result += '{}: {}\n'.format(categories[cat], stats[index][cat])
-                                result += '```'
-                                embed.description = result
-                                embed.set_thumbnail(url=img_link)
-                                await cache_msg.edit(embed=embed)
+                        await msg.add_reaction(emoji=self.left_arrow_emoji)
+                        await msg.add_reaction(emoji=self.right_arrow_emoji)
+                        
+                    check = lambda reaction, user: self.client.user != user
+                    rows = list(season_info.index)
+
+                    # keeps responding to input until the message times out
+                    while True:
+                        res = await self.client.wait_for('reaction_add', timeout=30, check=check)
+                        if res:
+                            cache_msg = res[0].message
+                            # checks the id so it can update the correct message
+                            if cache_msg.id == msg.id:
+                                emoji = str(res[0])
+                                change = True
+                                if emoji == self.left_arrow_emoji:
+                                    index = (index - 1) % (len(rows) - 1)
+                                elif emoji == self.right_arrow_emoji:
+                                    index = (index + 1) % (len(rows) - 1)
+                                elif emoji == self.blue_circle_emoji:
+                                    toggle_per_game = not toggle_per_game
+                                else:
+                                    change = False
+
+                                # only edit the embed when the user reacts with an appropriate emoji
+                                if change:
+                                    embed = await self.make_season_embed(player_info, season, toggle_per_game, index, img_link)
+                                    await cache_msg.edit(embed=embed)
+
                 except asyncio.TimeoutError:
                     print('Time\'s up')
                 except:
                     await ctx.send('The player did not play in that season')
             except:
                 await ctx.send('Couldn\'t find the player.')
+
+    # helper funciton to get the season stats of a player and create an embed
+    async def make_season_embed(self, player_info, season, toggle_per_game, index, img_link):
+        player_id = player_info['id']
+        player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id,
+                                                                  per_mode36='PerGame' if toggle_per_game else 'Totals')
+        season_tot = player_career_stats.season_totals_regular_season.get_data_frame()
+        season_info = season_tot[season_tot['SEASON_ID'] == season]
+        categories = season_info.columns
+        stats = season_info.values
+        embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
+        team_id = stats[index][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
+        player_team = teams.find_team_name_by_id(team_id)
+        result = '```TEAM: {}\n'.format(player_team['full_name'])
+        for cat in range(5, len(categories)):  # filters out the player, league, and team ID
+            result += '{}: {}\n'.format(categories[cat], stats[index][cat])
+        result += '```'
+        embed.description = result
+        embed.set_thumbnail(url=img_link)
+        return embed
 
     # returns the league standings
     @commands.command()
