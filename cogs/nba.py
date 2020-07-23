@@ -5,7 +5,6 @@ from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
 import json
-import asyncio
 
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
@@ -40,7 +39,7 @@ class nba(commands.Cog):
             if result == '':
                 await ctx.send('No games were played that day')
             else:
-                embed = discord.Embed(title="Scores for {}".format(date), description=result)
+                embed = discord.Embed(title=f"Scores for {date}", description=result)
                 await ctx.send(embed=embed)
         except:
             await ctx.send('Invalid date format, make sure the format is "YYYY-MM-DD" or "MM-DD-YYYY"')
@@ -68,41 +67,53 @@ class nba(commands.Cog):
                     home_win = '**'
                 else:
                     away_win = '**'
-                result += '{}{}  {}{} - {}{}  {}{}\n'.format(away_win,
-                                                             away_team,
-                                                             away_points, away_win, home_win, home_points,
-                                                             home_team,
-                                                             home_win)
+                result += f"{away_win}{away_team}  {away_points}{away_win} - {home_win}{home_points}  {home_team}{home_win}\n"
         return result
 
     # returns the player's information from the API
-    async def get_player_info(self, player_name):
+    async def get_player_info(self, ctx, player_name):
         from nba_api.stats.static import players
+
         player_dict = players.get_players()
         player_name = player_name.lower()
-        player_info = [player for player in player_dict if player['full_name'].lower() == player_name][0]
-        return player_info
+        player_info = [player for player in player_dict if (player['full_name'].lower() == player_name or
+                                                            player['first_name'].lower() == player_name or
+                                                            player['last_name'].lower() == player_name)]
+        if len(player_name) == 0:
+            await ctx.send('Please provide a player\'s name')
+        elif len(player_info) == 1:
+            return player_info[0]
+        elif len(player_info) > 1:
+            msg = f"Results for {player_name}:\n"
+            for player in player_info:
+                msg += f"{player['full_name']}\n"
+            await ctx.send(msg)
+        else:
+            await ctx.send('Couldn\'t find the player.')
+        return None
 
     # returns the careers stats of a given player
     @commands.command()
     async def pcareerstat(self, ctx, *, player_name=''):
         try:
-            player_info = await self.get_player_info(player_name)
+            player_info = await self.get_player_info(ctx, player_name)
             player_id = player_info['id']
+        except IndexError:
+            # get_player_info handles name issues
+            pass
+        else:
             img_link = await self.get_player_image(player_id)
             career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
             career_tot = career_stats.career_totals_regular_season.get_data_frame()
-            embed = discord.Embed(title='Career Stats for {}:\n'.format(player_info['full_name']))
+            embed = discord.Embed(title=f"Career Stats for {player_info['full_name']}:\n")
             result = '```'
             for cat in range(3, len(career_tot.columns)):  # filters out the player, league, and team ID
                 category = career_tot.columns[cat]
-                result += "{}: {}\n".format(category, career_tot[category][0])
+                result += f"{category}: {career_tot[category][0]}\n"
             result += '```'
             embed.description = result
             embed.set_thumbnail(url=img_link)
             await ctx.send(embed=embed)
-        except:
-            await ctx.send('Couldn\'t find the player.')
 
     # returns the image of the player
     async def get_player_image(self, player_id):
@@ -110,7 +121,7 @@ class nba(commands.Cog):
         with open('player_img.json') as f:
             images = json.load(f)
         if str(player_id) not in images:
-            browser.get("https://stats.nba.com/player/{}/".format(player_id))
+            browser.get(f"https://stats.nba.com/player/{player_id}/")
             data = BeautifulSoup(browser.page_source, 'lxml')
             img_link = data.find(class_='player-img')['src']
             images[player_id] = [img_link]
@@ -122,29 +133,36 @@ class nba(commands.Cog):
 
     # returns the careers stats of a given player
     @commands.command()
-    async def pseasonstat(self, ctx, *input):
-        from nba_api.stats.static import teams
-
-        # check if the input is first name, last name, and year (beginning of season)
-        if len(input) < 3:
-            await ctx.send('Please provide the player\'s full name and year at the beginning of the season (in that order)')
+    async def pseasonstat(self, ctx, *data):
+        # makes sure the input is in the correct format and separates the player name and the season
+        processed_data = await self.process_season_input(data)
+        try:
+            player_name, season = processed_data[0], processed_data[1]
+            season = str(season) + '-' + str(season + 1)[-2:]  # configure the season year to fit the API arguments
+        except (IndexError, TypeError):
+            await ctx.send('Please provide the player\'s name and season.')
         else:
-            player_name = input[0] + ' ' + input[1]
-            season = input[2] + '-' + str(int(input[2]) + 1)[-2:]  # configure the season year to fit the API arguments
             # checks if the user inputted a valid player
             try:
-                player_info = await self.get_player_info(player_name)
+                player_info = await self.get_player_info(ctx, player_name)
                 player_id = player_info['id']
                 player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id)
+            except IndexError:
+                # get_player_info handles name issues
+                pass
+            else:
                 # checks if the user inputted a valid season for the player
                 try:
                     # sends the initial data
-                    toggle_per_game = False
-                    index = 0
                     season_tot = player_career_stats.season_totals_regular_season.get_data_frame()
                     season_info = season_tot[season_tot['SEASON_ID'] == season]
+                    toggle_per_game = False
+                    index = 0
                     img_link = await self.get_player_image(player_id)
                     embed = await self.make_season_embed(player_info, season, toggle_per_game, index, img_link)
+                except IndexError:
+                    await ctx.send('The player did not play in that season')
+                else:
                     msg = await ctx.send(embed=embed)
                     await msg.add_reaction(emoji=self.blue_circle_emoji)
 
@@ -153,7 +171,7 @@ class nba(commands.Cog):
                     if len(season_info.index) > 1:
                         await msg.add_reaction(emoji=self.left_arrow_emoji)
                         await msg.add_reaction(emoji=self.right_arrow_emoji)
-                        
+
                     check = lambda reaction, user: self.client.user != user
                     rows = list(season_info.index)
 
@@ -180,14 +198,22 @@ class nba(commands.Cog):
                                     embed = await self.make_season_embed(player_info, season, toggle_per_game, index, img_link)
                                     await cache_msg.edit(embed=embed)
 
-                except asyncio.TimeoutError:
-                    print('Time\'s up')
-                except:
-                    await ctx.send('The player did not play in that season')
-            except:
-                await ctx.send('Couldn\'t find the player.')
+    # helper method to process the input for pseasonstat
+    async def process_season_input(self, data):
+        # tests if the last argument is a season
+        try:
+            season = int(data[-1])
+        except (IndexError, ValueError):
+            return None
+        # makes sure there is a name and season
+        if len(data) == 2:
+            return data[0], season
+        elif len(data) == 3:
+            return data[0] + ' ' + data[1], season
+        else:
+            return None
 
-    # helper funciton to get the season stats of a player and create an embed
+    # helper method to get the season stats of a player and create an embed
     async def make_season_embed(self, player_info, season, toggle_per_game, index, img_link):
         player_id = player_info['id']
         player_career_stats = playercareerstats.PlayerCareerStats(player_id=player_id,
@@ -196,12 +222,12 @@ class nba(commands.Cog):
         season_info = season_tot[season_tot['SEASON_ID'] == season]
         categories = season_info.columns
         stats = season_info.values
-        embed = discord.Embed(title='{} Season Stats for {}:\n'.format(season, player_info['full_name']))
+        embed = discord.Embed(title=f"{season} Season Stats for {player_info['full_name']}:\n")
         team_id = stats[index][categories.get_loc('TEAM_ID')]  # gets the player's team for the given season
         player_team = teams.find_team_name_by_id(team_id)
-        result = '```TEAM: {}\n'.format(player_team['full_name'])
+        result = f"```TEAM: {player_team['full_name']}\n"
         for cat in range(5, len(categories)):  # filters out the player, league, and team ID
-            result += '{}: {}\n'.format(categories[cat], stats[index][cat])
+            result += f"{categories[cat]}: {stats[index][cat]}\n"
         result += '```'
         embed.description = result
         embed.set_thumbnail(url=img_link)
@@ -220,11 +246,11 @@ class nba(commands.Cog):
 
         east_result = ''
         for i, row in enumerate(east_stand.itertuples(), 1):
-            east_result += '`{:<3} {:23} {:5}`\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
+            east_result += f"`{i:<3} {teams.find_team_name_by_id(row.TeamID)['full_name']:23} {row.Record:5}`\n"
         embed.add_field(name='Eastern Conference', value=east_result, inline=True)
         west_result = ''
         for i, row in enumerate(west_stand.itertuples(), 1):
-            west_result += '`{:<3} {:23} {:5}`\n'.format(i, teams.find_team_name_by_id(row.TeamID)['full_name'], row.Record)
+            west_result += f"`{i:<3} {teams.find_team_name_by_id(row.TeamID)['full_name']:23} {row.Record:5}`\n"
         embed.add_field(name='Western Conference', value=west_result, inline=True)
         await ctx.send(embed=embed)
 
@@ -240,10 +266,10 @@ class nba(commands.Cog):
         else:
             leaders = homepageleaders.HomePageLeaders(player_or_team=PlayerOrTeam.player, stat_category=stat_cat)
             leaders_df = leaders.get_data_frames()[0]
-            embed = discord.Embed(title='League Leaders for {} Per Game'.format(stat.upper()))
-            result = '`{:<4}  {:23} {:>5}`\n'.format('Rank', 'Name', stat.upper())
+            embed = discord.Embed(title=f"League Leaders for {stat.upper()} Per Game")
+            result = f"`{'Rank':<4}  {'Name':23} {stat.upper():>5}`\n"
             for index, row in leaders_df.iterrows():
-                result += '`{:<4}  {:23} {:5}`\n'.format(row.RANK, row.PLAYER, row[stat.upper()])
+                result += f"`{row.RANK:<4}  {row.PLAYER:23} {row[stat.upper()]:5}`\n"
             embed.description = result
             await ctx.send(embed=embed)
 
@@ -262,7 +288,7 @@ class nba(commands.Cog):
     @commands.command()
     async def fav(self, ctx, *, player_name=''):
         try:
-            player_info = await self.get_player_info(player_name)
+            player_info = await self.get_player_info(ctx, player_name)
             player_name = player_info['full_name']
             user_id = str(ctx.author.id)
             with open('user_favorites.json') as f:
@@ -274,13 +300,14 @@ class nba(commands.Cog):
                 if player_name not in fav_list:
                     fav_list.append(player_name)
                     favorites[user_id] = fav_list
-                    await ctx.send("{} has been added to your favorites list.".format(player_name))
+                    await ctx.send(f"{player_name} has been added to your favorites list.")
                 else:
-                    await ctx.send("{} is already on your favorites list.".format(player_name))
+                    await ctx.send(f"{player_name} is already on your favorites list.")
             with open('user_favorites.json', 'w') as f:
                 json.dump(favorites, f, indent=4)
-        except:
-            await ctx.send('Couldn\'t find the player.')
+        except IndexError:
+            # get_player_info handles name issues
+            pass
 
     # returns the user's favorites list
     @commands.command()
@@ -293,10 +320,10 @@ class nba(commands.Cog):
         else:
             fav_list = favorites[user_id]
             print(fav_list)
-            embed = discord.Embed(title='{}\'s Favorites List'.format(ctx.author.display_name))
+            embed = discord.Embed(title=f"{ctx.author.display_name}\'s Favorites List")
             result = ''
             for player in fav_list:
-                result += '**{}**\n'.format(player)
+                result += f"**{player}**\n"
             embed.description = result
             await ctx.send(embed=embed)
 
@@ -304,7 +331,7 @@ class nba(commands.Cog):
     @commands.command()
     async def favremove(self, ctx, *, player_name=''):
         try:
-            player_info = await self.get_player_info(player_name)
+            player_info = await self.get_player_info(ctx, player_name)
             player_name = player_info['full_name']
             user_id = str(ctx.author.id)
             with open('user_favorites.json') as f:
@@ -317,9 +344,10 @@ class nba(commands.Cog):
                 favorites[user_id] = list(fav_list)
             with open('user_favorites.json', 'w') as f:
                 json.dump(favorites, f, indent=4)
-            await ctx.send("{} has been removed from your favorites list.".format(player_name))
-        except:
-            await ctx.send('Couldn\'t find the player.')
+            await ctx.send(f"{player_name} has been removed from your favorites list.")
+        except IndexError:
+            # get_player_info handles name issues
+            pass
 
 
 def setup(client):
