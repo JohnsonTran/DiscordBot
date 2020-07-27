@@ -5,6 +5,7 @@ from nba_api.stats.endpoints import scoreboard
 from nba_api.stats.static import teams
 from nba_api.stats.library.parameters import GameDate
 import json
+import numpy
 
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
@@ -46,15 +47,18 @@ class nba(commands.Cog):
 
     # formats the output for scores
     async def get_scores(self, score):
-        result = ''
+        result = '```'
         line_score = score.line_score
         ls_df = line_score.get_data_frame()
+        ls_df['PTS'] = ls_df['PTS'].fillna(0).astype(numpy.int64)
+        game_header = score.game_header
+        gh_df = game_header.get_data_frame()
         if not ls_df.empty:
             team_points = ls_df[['TEAM_ID', 'PTS']]
             for x in range(0, len(team_points), 2):
                 try:
-                    away_team = teams.find_team_name_by_id(ls_df['TEAM_ID'][x])['full_name']
-                    home_team = teams.find_team_name_by_id(ls_df['TEAM_ID'][x + 1])['full_name']
+                    away_team = teams.find_team_name_by_id(ls_df['TEAM_ID'][x])['nickname']
+                    home_team = teams.find_team_name_by_id(ls_df['TEAM_ID'][x + 1])['nickname']
                 # handles case where teams are not in the list of current teams i.e. Team LeBron, West All-Stars
                 except:
                     away_team = ls_df['TEAM_CITY_NAME'][x] + ' ' + ls_df['TEAM_ABBREVIATION'][x]
@@ -67,7 +71,9 @@ class nba(commands.Cog):
                     home_win = '**'
                 else:
                     away_win = '**'
-                result += f"{away_win}{away_team}  {away_points}{away_win} - {home_win}{home_points}  {home_team}{home_win}\n"
+                # result += f"{away_win}{away_team}  {away_points}{away_win} - {home_win}{home_points}  {home_team}{home_win} {gh_df['GAME_STATUS_TEXT'][x // 2]}\n"
+                result += f"{away_team:<14} {int(away_points):>3}-{int(home_points):<3} {home_team:>14}   {gh_df['GAME_STATUS_TEXT'][x // 2]}\n"
+        result += '```'
         return result
 
     # returns the player's information from the API
@@ -319,7 +325,6 @@ class nba(commands.Cog):
             await ctx.send('You don\'t anyone on your favorites list')
         else:
             fav_list = favorites[user_id]
-            print(fav_list)
             embed = discord.Embed(title=f"{ctx.author.display_name}\'s Favorites List")
             result = ''
             for player in fav_list:
