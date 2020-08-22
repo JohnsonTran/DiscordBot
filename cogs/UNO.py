@@ -149,15 +149,14 @@ class UNO(commands.Cog):
         embed = discord.Embed(title="Want to play UNO?", description="React to the message to queue up!",
                               color=discord.Colour.red())
         embed.set_author(name=ctx.author.name, icon_url=ctx.author.avatar_url)
-        embed.set_image(
-            url="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/UNO_Logo.svg/550px-UNO_Logo.svg.png")
+        embed.set_image(url="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/UNO_Logo.svg/550px-UNO_Logo.svg.png")
         msg = await ctx.send(embed=embed)
         await msg.add_reaction("\U0001F44D")  # thumbs-up emoji
         await asyncio.sleep(10)
         cache_msg = await ctx.channel.fetch_message(msg.id)
         reaction = cache_msg.reactions[0]
         users = await reaction.users().flatten()
-        users.pop(0)  # removes the bot from the player list
+        users = [user for user in users if not user.bot]
         return users
 
     # deals players 7 cards for the start of the game
@@ -177,7 +176,7 @@ class UNO(commands.Cog):
     # determines the winner and DMs everyone who played
     async def display_winner(self, ctx, player_list):
         player_index = 0
-         # dms everyone if they won or lost
+        # dms everyone if they won or lost
         while player_index < len(player_list):
             user = player_list[player_index].discord_info
             if len(player_list[player_index].get_hand()) == 0:
@@ -212,6 +211,7 @@ class UNO(commands.Cog):
                 await msg.add_reaction(card_index[card])
             await msg.add_reaction(card_index[len(card_index) - 1])  # add draw emoji
 
+            # waits for input and gets the user's choice based on the reaction they chose
             def check(reaction, user):
                 return str(reaction.emoji) in card_index and user == player
             try:
@@ -281,6 +281,7 @@ class UNO(commands.Cog):
         for color in color_change_emoji:
             await msg.add_reaction(color_change_emoji[color])
 
+        # waits for input and gets the user's choice based on the reaction they chose
         def check(reaction, user):
             return str(reaction.emoji) in color_change_emoji.values() and user == player
 
@@ -288,6 +289,7 @@ class UNO(commands.Cog):
             reaction, user = await self.client.wait_for("reaction_add", timeout=10000.0, check=check)
         except asyncio.TimeoutError:
             await player.send("You took too long")
+
         await player.send("You chose {}".format(str(reaction.emoji)))
         color_choice = None
         for color, unicode in color_change_emoji.items():
